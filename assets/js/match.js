@@ -1,15 +1,89 @@
 const { authService, playersService, matchesService, eventsService } = window.Xolitas;
-const session=authService.require();if(session&&!authService.can('capture'))location.href='./dashboard.html';
-const existing=matchesService.active(),scheduled=matchesService.all().find(m=>m.estado==='programado');let match=existing||{...scheduled,estado:'jugando',golesXolitas:0,golesRival:0,elapsed:0,phase:'PRIMER TIEMPO'};matchesService.setActive(match);let ticking=false,timerId;
-const app=document.querySelector('#match-app');render();
-function render(){const events=eventsService.forMatch(match.id);app.innerHTML=`<section class="match-page"><header class="match-top"><a class="back" href="./dashboard.html">← Panel</a><span class="live"><i></i> EN VIVO</span><span class="phase">${match.phase}</span></header><section class="scoreboard"><div class="club"><img src="../assets/xolitas-crest.png" alt="Escudo Xolitas"><strong>XOLITAS</strong></div><div class="score"><b id="us">${match.golesXolitas}</b><span>—</span><b id="them">${match.golesRival}</b></div><div class="club"><div class="rival-mark">${match.rival[0]}</div><strong>${match.rival.toUpperCase()}</strong></div></section><div class="timer" id="timer">${clock(match.elapsed||0)}</div><div class="timer-controls"><button id="toggle-time">▶ Iniciar cronómetro</button></div><section class="actions"><button class="action goal-us" id="goal-us">⚽ + GOL XOLITAS</button><button class="action goal-them" id="goal-them">+ Gol rival</button><button class="action event" id="future-event">+ Evento</button><button class="action break" id="break">Descanso</button><button class="action finish" id="finish">Finalizar partido</button></section><button class="undo" id="undo">↶ Deshacer último evento</button><section class="timeline"><h2>LÍNEA DEL PARTIDO</h2><div id="events">${events.length?events.slice().reverse().map(eventHTML).join(''):'<p class="empty">Los eventos aparecerán aquí.</p>'}</div></section></section>${sheetHTML()}${confirmHTML()}<div class="goal-flash" id="goal-flash"><span class="star">✦</span><small>¡GOOOOOOL!</small><h2 id="scorer-name"></h2><b id="scorer-num"></b></div><section class="final-screen" id="final"><img src="../assets/xolitas-crest.png" alt="Xolitas F.C."><small>FINAL</small><h2>XOLITAS — ${match.rival.toUpperCase()}</h2><div class="final-score">${match.golesXolitas} — ${match.golesRival}</div><h3>GOLEADORAS</h3><ul>${events.filter(e=>e.tipo==='gol_xolitas').map(e=>`<li>⚽ ${e.jugadoraNombre} &nbsp; ${e.minuto}'</li>`).join('')}</ul><a href="./dashboard.html">Volver al panel</a></section>`;bind()}
-function sheetHTML(){return `<dialog class="sheet" id="scorer-sheet"><div class="sheet-head"><h2>¿QUIÉN ANOTÓ?</h2><button data-close>×</button></div><div class="player-options">${playersService.all().filter(p=>p.activa).map(p=>`<button class="player-option" data-player="${p.id}"><b>#${p.numero}</b><span>${p.nombre}<br><small>${p.posicion}</small></span></button>`).join('')}</div></dialog>`}
-function confirmHTML(){return `<dialog class="confirm" id="confirm"><h2 id="confirm-title">CONFIRMAR</h2><p id="confirm-copy"></p><div class="confirm-actions"><button data-close>Cancelar</button><button class="yes" id="confirm-yes">Confirmar</button></div></dialog>`}
-function bind(){document.querySelector('#goal-us').onclick=()=>document.querySelector('#scorer-sheet').showModal();document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>b.closest('dialog').close());document.querySelectorAll('[data-player]').forEach(b=>b.onclick=()=>addOurGoal(b.dataset.player));document.querySelector('#goal-them').onclick=addRivalGoal;document.querySelector('#toggle-time').onclick=toggleTimer;document.querySelector('#break').onclick=()=>{match.phase=match.phase==='DESCANSO'?'SEGUNDO TIEMPO':'DESCANSO';saveRender()};document.querySelector('#future-event').onclick=()=>alert('La estructura ya está preparada para tarjetas, asistencias y cambios. Se habilitará en una siguiente etapa.');document.querySelector('#undo').onclick=confirmUndo;document.querySelector('#finish').onclick=confirmFinish}
-function addOurGoal(id){const p=playersService.all().find(x=>x.id===id),minute=Math.floor((match.elapsed||0)/60)+1;eventsService.add({matchId:match.id,jugadoraId:p.id,jugadoraNombre:p.nombre,tipo:'gol_xolitas',minuto:minute,segundo:(match.elapsed||0)%60});match.golesXolitas++;matchesService.setActive(match);document.querySelector('#scorer-sheet').close();document.querySelector('#scorer-name').textContent=p.nombre.toUpperCase();document.querySelector('#scorer-num').textContent='#'+p.numero;document.querySelector('#us').textContent=match.golesXolitas;const flash=document.querySelector('#goal-flash');flash.classList.remove('show-goal');void flash.offsetWidth;flash.classList.add('show-goal');setTimeout(render,2050)}
-function addRivalGoal(){eventsService.add({matchId:match.id,tipo:'gol_rival',minuto:Math.floor((match.elapsed||0)/60)+1,segundo:(match.elapsed||0)%60});match.golesRival++;saveRender()}
-function confirmUndo(){const events=eventsService.forMatch(match.id);if(!events.length)return;const last=events.at(-1),d=document.querySelector('#confirm');document.querySelector('#confirm-title').textContent='¿DESHACER EVENTO?';document.querySelector('#confirm-copy').textContent='Se eliminará el último evento registrado.';document.querySelector('#confirm-yes').onclick=()=>{eventsService.undo(match.id);last.tipo==='gol_xolitas'?match.golesXolitas--:match.golesRival--;d.close();saveRender()};d.showModal()}
-function confirmFinish(){const d=document.querySelector('#confirm');document.querySelector('#confirm-title').textContent='¿FINALIZAR PARTIDO?';document.querySelector('#confirm-copy').textContent=`Xolitas ${match.golesXolitas} — ${match.golesRival} ${match.rival}`;document.querySelector('#confirm-yes').onclick=()=>{match.estado='finalizado';matchesService.save(match);matchesService.setActive(null);d.close();document.querySelector('#final').classList.add('show')};d.showModal()}
-function toggleTimer(){ticking=!ticking;const btn=document.querySelector('#toggle-time');btn.textContent=ticking?'Ⅱ Pausar cronómetro':'▶ Continuar cronómetro';if(ticking)timerId=setInterval(()=>{match.elapsed=(match.elapsed||0)+1;document.querySelector('#timer').textContent=clock(match.elapsed);if(match.elapsed%10===0)matchesService.setActive(match)},1000);else clearInterval(timerId)}
-function saveRender(){clearInterval(timerId);ticking=false;matchesService.setActive(match);render()}
-function eventHTML(e){return `<div class="event-row"><time>${e.minuto}'</time><span>${e.tipo==='gol_xolitas'?'⚽':'◆'}</span><strong>${e.tipo==='gol_xolitas'?e.jugadoraNombre:'Gol de '+match.rival}</strong></div>`}function clock(s){return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`}
+let match;
+let ticking = false;
+let timerId;
+let pendingEventType = '';
+const app = document.querySelector('#match-app');
+window.Xolitas.ready.then(async()=>{const session=authService.require();if(!session||!authService.can('capture')){if(session)location.href='./dashboard.html';return}const existing=matchesService.active(),scheduled=matchesService.all().find(m=>m.estado==='programado');match=existing||{...scheduled,estado:'jugando',golesXolitas:0,golesRival:0,elapsed:0,phase:'PRIMER TIEMPO'};if(!existing)await matchesService.start(match.id);matchesService.setActive(match);await eventsService.sync(match.id);render()}).catch(error=>{app.innerHTML=`<p class="empty">No se pudo preparar el partido: ${error.message}</p>`});
+
+function render() {
+  const events = eventsService.forMatch(match.id);
+  app.innerHTML = `<section class="match-page">
+    <header class="match-top"><a class="back" href="./dashboard.html">← Panel</a><span class="live"><i></i> EN VIVO</span><span class="phase">${match.phase}</span></header>
+    <section class="scoreboard"><div class="club"><img src="../assets/xolitas-crest.png" alt="Escudo Xolitas"><strong>XOLITAS</strong></div><div class="score"><b id="us">${match.golesXolitas}</b><span>—</span><b id="them">${match.golesRival}</b></div><div class="club"><div class="rival-mark">${match.rival[0]}</div><strong>${match.rival.toUpperCase()}</strong></div></section>
+    <div class="timer" id="timer">${clock(match.elapsed || 0)}</div><div class="timer-controls"><button id="toggle-time">${ticking ? 'Ⅱ Pausar cronómetro' : '▶ Iniciar cronómetro'}</button></div>
+    <section class="actions"><button class="action goal-us" id="goal-us">⚽ + GOL XOLITAS</button><button class="action goal-them" id="goal-them">+ Gol rival</button><button class="action event" id="event">▣ Tarjeta / expulsión</button><button class="action break" id="break">Descanso</button><button class="action finish" id="finish">Finalizar partido</button></section>
+    <button class="undo" id="undo">↶ Deshacer último evento</button><section class="timeline"><h2>LÍNEA DEL PARTIDO</h2><div>${events.length ? events.slice().reverse().map(eventHTML).join('') : '<p class="empty">Los eventos aparecerán aquí.</p>'}</div></section>
+  </section>${scorerSheet()}${eventTypeSheet()}${eventPlayerSheet()}${confirmDialog()}
+  <div class="goal-flash" id="goal-flash"><span class="star">✦</span><small>¡GOOOOOOL!</small><h2 id="scorer-name"></h2><b id="scorer-num"></b></div>
+  <section class="final-screen" id="final"><img src="../assets/xolitas-crest.png" alt="Xolitas F.C."><small>FINAL</small><h2>XOLITAS — ${match.rival.toUpperCase()}</h2><div class="final-score">${match.golesXolitas} — ${match.golesRival}</div><h3>GOLEADORAS</h3><ul>${events.filter(e => e.tipo === 'gol_xolitas').map(e => `<li>⚽ ${e.jugadoraNombre} &nbsp; ${e.minuto}'</li>`).join('')}</ul><a href="./dashboard.html">Volver al panel</a></section>`;
+  bind();
+}
+
+function playerButtons(attribute) {
+  const expelled = expelledPlayerIds();
+  return playersService.all().filter(p => p.activa).map(p => `<button class="player-option ${expelled.has(p.id) ? 'is-expelled' : ''}" ${expelled.has(p.id) ? 'disabled' : ''} ${attribute}="${p.id}"><b>#${p.numero}</b><span>${p.nombre}<br><small>${expelled.has(p.id) ? 'EXPULSADA' : p.posicion}</small></span></button>`).join('');
+}
+function scorerSheet() { return `<dialog class="sheet" id="scorer-sheet"><div class="sheet-head"><h2>¿QUIÉN ANOTÓ?</h2><button data-close>×</button></div><div class="player-options">${playerButtons('data-scorer')}</div></dialog>`; }
+function eventTypeSheet() { return `<dialog class="sheet" id="event-type-sheet"><div class="sheet-head"><h2>REGISTRAR EVENTO</h2><button data-close>×</button></div><div class="event-types"><button data-event-type="amarilla"><span>🟨</span><b>Tarjeta amarilla</b></button><button data-event-type="roja"><span>🟥</span><b>Tarjeta roja</b></button><button data-event-type="expulsion"><span>⬛</span><b>Expulsión</b></button></div></dialog>`; }
+function eventPlayerSheet() { return `<dialog class="sheet" id="event-player-sheet"><div class="sheet-head"><h2 id="event-player-title">SELECCIONA JUGADORA</h2><button data-close>×</button></div><div class="player-options">${playerButtons('data-card-player')}</div></dialog>`; }
+function confirmDialog() { return `<dialog class="confirm" id="confirm"><h2 id="confirm-title">CONFIRMAR</h2><p id="confirm-copy"></p><div class="confirm-actions"><button data-close>Cancelar</button><button class="yes" id="confirm-yes">Confirmar</button></div></dialog>`; }
+
+function bind() {
+  document.querySelector('#goal-us').onclick = () => document.querySelector('#scorer-sheet').showModal();
+  document.querySelector('#event').onclick = () => document.querySelector('#event-type-sheet').showModal();
+  document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => b.closest('dialog').close());
+  document.querySelectorAll('[data-scorer]').forEach(b => b.onclick = () => addOurGoal(b.dataset.scorer));
+  document.querySelectorAll('[data-event-type]').forEach(b => b.onclick = () => chooseEventType(b.dataset.eventType));
+  document.querySelectorAll('[data-card-player]').forEach(b => b.onclick = () => addDisciplinaryEvent(b.dataset.cardPlayer));
+  document.querySelector('#goal-them').onclick = addRivalGoal;
+  document.querySelector('#toggle-time').onclick = toggleTimer;
+  document.querySelector('#break').onclick = () => { match.phase = match.phase === 'DESCANSO' ? 'SEGUNDO TIEMPO' : 'DESCANSO'; saveRender(true); };
+  document.querySelector('#undo').onclick = confirmUndo;
+  document.querySelector('#finish').onclick = confirmFinish;
+}
+
+function chooseEventType(type) {
+  pendingEventType = type;
+  document.querySelector('#event-type-sheet').close();
+  const labels = { amarilla: 'AMARILLA PARA…', roja: 'ROJA PARA…', expulsion: 'EXPULSAR A…' };
+  document.querySelector('#event-player-title').textContent = labels[type];
+  document.querySelector('#event-player-sheet').showModal();
+}
+function addDisciplinaryEvent(id) {
+  const p = playersService.all().find(x => x.id === id);
+  const priorYellows = eventsService.forMatch(match.id).filter(e => e.jugadoraId === id && e.tipo === 'amarilla').length;
+  const type = pendingEventType === 'amarilla' && priorYellows >= 1 ? 'segunda_amarilla' : pendingEventType;
+  eventsService.add({ matchId: match.id, jugadoraId: p.id, jugadoraNombre: p.nombre, jugadoraNumero: p.numero, tipo: type, minuto: currentMinute(), segundo: (match.elapsed || 0) % 60 });
+  document.querySelector('#event-player-sheet').close();
+  saveRender();
+}
+function addOurGoal(id) {
+  const p = playersService.all().find(x => x.id === id);
+  eventsService.add({ matchId: match.id, jugadoraId: p.id, jugadoraNombre: p.nombre, tipo: 'gol_xolitas', minuto: currentMinute(), segundo: (match.elapsed || 0) % 60 });
+  match.golesXolitas++;
+  matchesService.setActive(match);
+  document.querySelector('#scorer-sheet').close();
+  document.querySelector('#scorer-name').textContent = p.nombre.toUpperCase();
+  document.querySelector('#scorer-num').textContent = '#' + p.numero;
+  document.querySelector('#us').textContent = match.golesXolitas;
+  const flash = document.querySelector('#goal-flash'); flash.classList.remove('show-goal'); void flash.offsetWidth; flash.classList.add('show-goal');
+  setTimeout(render, 2050);
+}
+function addRivalGoal() { eventsService.add({ matchId: match.id, tipo: 'gol_rival', minuto: currentMinute(), segundo: (match.elapsed || 0) % 60 }); match.golesRival++; saveRender(); }
+function confirmUndo() {
+  const events = eventsService.forMatch(match.id); if (!events.length) return;
+  const last = events.at(-1), d = document.querySelector('#confirm');
+  document.querySelector('#confirm-title').textContent = '¿DESHACER EVENTO?';
+  document.querySelector('#confirm-copy').textContent = `Se eliminará: ${eventLabel(last)}.`;
+  document.querySelector('#confirm-yes').onclick = () => { eventsService.undo(match.id); if (last.tipo === 'gol_xolitas') match.golesXolitas = Math.max(0, match.golesXolitas - 1); if (last.tipo === 'gol_rival') match.golesRival = Math.max(0, match.golesRival - 1); d.close(); saveRender(); };
+  d.showModal();
+}
+function confirmFinish() { const d = document.querySelector('#confirm'); document.querySelector('#confirm-title').textContent = '¿FINALIZAR PARTIDO?'; document.querySelector('#confirm-copy').textContent = `Xolitas ${match.golesXolitas} — ${match.golesRival} ${match.rival}`; document.querySelector('#confirm-yes').onclick = async () => { try { await matchesService.finish(match.id); match.estado = 'finalizado'; await matchesService.save(match); matchesService.setActive(null); d.close(); document.querySelector('#final').classList.add('show'); } catch(error) { document.querySelector('#confirm-copy').textContent = `No se pudo finalizar: ${error.message}`; } }; d.showModal(); }
+function toggleTimer() { ticking = !ticking; const btn = document.querySelector('#toggle-time'); btn.textContent = ticking ? 'Ⅱ Pausar cronómetro' : '▶ Continuar cronómetro'; if (ticking) timerId = setInterval(() => { match.elapsed = (match.elapsed || 0) + 1; document.querySelector('#timer').textContent = clock(match.elapsed); if (match.elapsed % 10 === 0) matchesService.setActive(match); }, 1000); else clearInterval(timerId); }
+function saveRender(stopTimer = false) { if (stopTimer) { clearInterval(timerId); ticking = false; } matchesService.setActive(match); render(); }
+function expelledPlayerIds() { return new Set(eventsService.forMatch(match.id).filter(e => ['roja', 'expulsion', 'segunda_amarilla'].includes(e.tipo)).map(e => e.jugadoraId)); }
+function eventLabel(e) { return ({ gol_xolitas: `Gol de ${e.jugadoraNombre}`, gol_rival: `Gol de ${match.rival}`, amarilla: `Amarilla a ${e.jugadoraNombre}`, roja: `Roja a ${e.jugadoraNombre}`, expulsion: `Expulsión de ${e.jugadoraNombre}`, segunda_amarilla: `Segunda amarilla y expulsión de ${e.jugadoraNombre}` })[e.tipo] || e.tipo; }
+function eventHTML(e) { const icons = { gol_xolitas: '⚽', gol_rival: '◆', amarilla: '🟨', roja: '🟥', expulsion: '⬛', segunda_amarilla: '🟨🟥' }; return `<div class="event-row event-row--${e.tipo}"><time>${e.minuto}'</time><span>${icons[e.tipo] || '•'}</span><strong>${eventLabel(e)}</strong></div>`; }
+function currentMinute() { return Math.floor((match.elapsed || 0) / 60) + 1; }
+function clock(s) { return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; }
