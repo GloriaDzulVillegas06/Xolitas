@@ -4,13 +4,14 @@ let ticking = false;
 let timerId;
 let pendingEventType = '';
 const app = document.querySelector('#match-app');
-window.Xolitas.ready.then(async()=>{const session=authService.require();if(!session||!authService.can('capture')){if(session)location.href='./dashboard.html';return}const existing=matchesService.active(),scheduled=matchesService.all().find(m=>m.estado==='programado');match=existing||{...scheduled,estado:'jugando',golesXolitas:0,golesRival:0,elapsed:0,phase:'PRIMER TIEMPO'};if(!existing)await matchesService.start(match.id);matchesService.setActive(match);await eventsService.sync(match.id);render()}).catch(error=>{app.innerHTML=`<p class="empty">No se pudo preparar el partido: ${error.message}</p>`});
+window.Xolitas.ready.then(async()=>{const session=authService.require();if(!session||!authService.can('capture')){if(session)location.href='./dashboard.html';return}const requestedId=new URLSearchParams(location.search).get('id'),existing=matchesService.active(),selected=matchesService.all().find(m=>String(m.id)===String(requestedId))||matchesService.all().find(m=>m.estado==='programado');if(!selected)throw new Error('No hay un partido programado para iniciar.');const canResume=existing&&String(existing.id)===String(selected.id)&&existing.estado!=='finalizado';match=canResume?existing:{...selected,estado:'jugando',golesXolitas:+(selected.golesXolitas||0),golesRival:+(selected.golesRival||0),elapsed:0,phase:'PRIMER TIEMPO'};if(!canResume){matchesService.setActive(null);await matchesService.start(match.id)}matchesService.setActive(match);await eventsService.sync(match.id);render()}).catch(error=>{app.innerHTML=`<p class="empty">No se pudo preparar el partido: ${error.message}</p>`});
 
 function render() {
+  app.classList.remove('admin-loader');
   const events = eventsService.forMatch(match.id);
   app.innerHTML = `<section class="match-page">
     <header class="match-top"><a class="back" href="./dashboard.html">← Panel</a><span class="live"><i></i> EN VIVO</span><span class="phase">${match.phase}</span></header>
-    <section class="scoreboard"><div class="club"><img src="../assets/xolitas-crest.png" alt="Escudo Xolitas"><strong>XOLITAS</strong></div><div class="score"><b id="us">${match.golesXolitas}</b><span>—</span><b id="them">${match.golesRival}</b></div><div class="club"><div class="rival-mark">${match.rival[0]}</div><strong>${match.rival.toUpperCase()}</strong></div></section>
+    <section class="scoreboard"><div class="club"><img src="../assets/xolitas-crest.png" alt="Escudo Xolitas"><strong>XOLITAS</strong></div><div class="score"><b id="us">${match.golesXolitas}</b><span>—</span><b id="them">${match.golesRival}</b></div><div class="club"><img src="${match.logoRival||'../assets/default-rival.svg'}" alt="Escudo de ${match.rival}" onerror="this.onerror=null;this.src='../assets/default-rival.svg'"><strong>${match.rival.toUpperCase()}</strong></div></section>
     <div class="timer" id="timer">${clock(match.elapsed || 0)}</div><div class="timer-controls"><button id="toggle-time">${ticking ? 'Ⅱ Pausar cronómetro' : '▶ Iniciar cronómetro'}</button></div>
     <section class="actions"><button class="action goal-us" id="goal-us">⚽ + GOL XOLITAS</button><button class="action goal-them" id="goal-them">+ Gol rival</button><button class="action event" id="event">▣ Tarjeta / expulsión</button><button class="action break" id="break">Descanso</button><button class="action finish" id="finish">Finalizar partido</button></section>
     <button class="undo" id="undo">↶ Deshacer último evento</button><section class="timeline"><h2>LÍNEA DEL PARTIDO</h2><div>${events.length ? events.slice().reverse().map(eventHTML).join('') : '<p class="empty">Los eventos aparecerán aquí.</p>'}</div></section>
@@ -52,9 +53,7 @@ function chooseEventType(type) {
 }
 function addDisciplinaryEvent(id) {
   const p = playersService.all().find(x => x.id === id);
-  const priorYellows = eventsService.forMatch(match.id).filter(e => e.jugadoraId === id && e.tipo === 'amarilla').length;
-  const type = pendingEventType === 'amarilla' && priorYellows >= 1 ? 'segunda_amarilla' : pendingEventType;
-  eventsService.add({ matchId: match.id, jugadoraId: p.id, jugadoraNombre: p.nombre, jugadoraNumero: p.numero, tipo: type, minuto: currentMinute(), segundo: (match.elapsed || 0) % 60 });
+  eventsService.add({ matchId: match.id, jugadoraId: p.id, jugadoraNombre: p.nombre, jugadoraNumero: p.numero, tipo: pendingEventType, minuto: currentMinute(), segundo: (match.elapsed || 0) % 60 });
   document.querySelector('#event-player-sheet').close();
   saveRender();
 }
@@ -82,8 +81,8 @@ function confirmUndo() {
 function confirmFinish() { const d = document.querySelector('#confirm'); document.querySelector('#confirm-title').textContent = '¿FINALIZAR PARTIDO?'; document.querySelector('#confirm-copy').textContent = `Xolitas ${match.golesXolitas} — ${match.golesRival} ${match.rival}`; document.querySelector('#confirm-yes').onclick = async () => { try { await matchesService.finish(match.id); match.estado = 'finalizado'; await matchesService.save(match); matchesService.setActive(null); d.close(); document.querySelector('#final').classList.add('show'); } catch(error) { document.querySelector('#confirm-copy').textContent = `No se pudo finalizar: ${error.message}`; } }; d.showModal(); }
 function toggleTimer() { ticking = !ticking; const btn = document.querySelector('#toggle-time'); btn.textContent = ticking ? 'Ⅱ Pausar cronómetro' : '▶ Continuar cronómetro'; if (ticking) timerId = setInterval(() => { match.elapsed = (match.elapsed || 0) + 1; document.querySelector('#timer').textContent = clock(match.elapsed); if (match.elapsed % 10 === 0) matchesService.setActive(match); }, 1000); else clearInterval(timerId); }
 function saveRender(stopTimer = false) { if (stopTimer) { clearInterval(timerId); ticking = false; } matchesService.setActive(match); render(); }
-function expelledPlayerIds() { return new Set(eventsService.forMatch(match.id).filter(e => ['roja', 'expulsion', 'segunda_amarilla'].includes(e.tipo)).map(e => e.jugadoraId)); }
-function eventLabel(e) { return ({ gol_xolitas: `Gol de ${e.jugadoraNombre}`, gol_rival: `Gol de ${match.rival}`, amarilla: `Amarilla a ${e.jugadoraNombre}`, roja: `Roja a ${e.jugadoraNombre}`, expulsion: `Expulsión de ${e.jugadoraNombre}`, segunda_amarilla: `Segunda amarilla y expulsión de ${e.jugadoraNombre}` })[e.tipo] || e.tipo; }
-function eventHTML(e) { const icons = { gol_xolitas: '⚽', gol_rival: '◆', amarilla: '🟨', roja: '🟥', expulsion: '⬛', segunda_amarilla: '🟨🟥' }; return `<div class="event-row event-row--${e.tipo}"><time>${e.minuto}'</time><span>${icons[e.tipo] || '•'}</span><strong>${eventLabel(e)}</strong></div>`; }
+function expelledPlayerIds() { return new Set(eventsService.forMatch(match.id).filter(e => ['roja', 'expulsion'].includes(e.tipo)).map(e => e.jugadoraId)); }
+function eventLabel(e) { return ({ gol_xolitas: `Gol de ${e.jugadoraNombre}`, gol_rival: `Gol de ${match.rival}`, amarilla: `Amarilla a ${e.jugadoraNombre}`, roja: `Roja a ${e.jugadoraNombre}`, expulsion: `Expulsión de ${e.jugadoraNombre}` })[e.tipo] || e.tipo; }
+function eventHTML(e) { const icons = { gol_xolitas: '⚽', gol_rival: '◆', amarilla: '🟨', roja: '🟥', expulsion: '⬛' }; return `<div class="event-row event-row--${e.tipo}"><time>${e.minuto}'</time><span>${icons[e.tipo] || '•'}</span><strong>${eventLabel(e)}</strong></div>`; }
 function currentMinute() { return Math.floor((match.elapsed || 0) / 60) + 1; }
 function clock(s) { return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; }
